@@ -50,4 +50,13 @@ grep -qx 'dtparam=uart0=on' "$CONFIG"
 do_serial_hw 1
 ! grep -q '^dtparam=uart0=' "$CONFIG"
 
+is_pifive() {
+  return 1
+}
+
+do_serial_hw 1
+grep -qx 'enable_uart=0' "$CONFIG"
+do_serial_hw 0
+grep -qx 'enable_uart=1' "$CONFIG"
+
 printf 'Arch interface configuration tests passed\n'

@@ -1,5 +1,5 @@
 pkgname=raspi-config-git
-pkgver=20260925.r0.293f4bb
+pkgver=20261019.r714.a781ef3
 pkgrel=1
 pkgdesc='Raspberry Pi hardware interface configuration for Arch Linux ARM'
 arch=('any')
