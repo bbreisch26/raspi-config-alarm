@@ -45,5 +45,6 @@ SPI in the menu, reboot, and check for `/dev/i2c-*` and `/dev/spidev*`.
 Run `sh tests/test_arch_interfaces.sh` for boot-file edits. `PKGBUILD` produces
 an Arch package from this branch. Physical Pi 4B and Pi 5 tests are required
 before release, including UART console/data behaviour, I2C and SPI devices,
-and 1-Wire enumeration. The Omarchy Pi build includes this package, but a new
-image still needs to be built and tested on hardware. AUR publication is pending.
+and 1-Wire enumeration. Omarchy Pi image integration is prepared locally, but
+a new image still needs to be built and tested on hardware. AUR publication is
+pending.
