@@ -8,12 +8,7 @@ INTERACTIVE="${INTERACTIVE:-True}"
 ASK_TO_REBOOT=0
 BLACKLIST=/etc/modprobe.d/raspi-blacklist.conf
 
-if [ -e /boot/firmware/config.txt ] ; then
-  FIRMWARE=/firmware
-else
-  FIRMWARE=
-fi
-CONFIG=/boot${FIRMWARE}/config.txt
+CONFIG=/boot/config.txt
 
 USER=${SUDO_USER:-$(who -m | awk '{ print $1 }')}
 if [ -z "$USER" ] && [ -n "$HOME" ]; then
@@ -30,32 +25,14 @@ LABWCENV_FILE="$HOMEDIR/.config/labwc/environment"
 LABWCAST_FILE="$HOMEDIR/.config/labwc/autostart"
 
 is_pi () {
-  ARCH=$(dpkg --print-architecture)
-  if [ "$ARCH" = "armhf" ] || [ "$ARCH" = "arm64" ] ; then
-    return 0
-  else
-    return 1
-  fi
+  [ -r /proc/device-tree/model ] && grep -aq '^Raspberry Pi ' /proc/device-tree/model
 }
 
 is_64bit () {
-  ARCH=$(dpkg --print-architecture)
-  if [ "$ARCH" = "arm64" ] ; then
-    return 0
-  else
-    return 1
-  fi
+  [ "$(uname -m)" = aarch64 ]
 }
 
-if is_pi ; then
-  if [ -e /proc/device-tree/chosen/os_prefix ]; then
-    PREFIX="$(tr -d '\0' < /proc/device-tree/chosen/os_prefix)"
-  fi
-  CMDLINE_FILE="$(vcgencmd get_config cmdline 2> /dev/null | sed -n "s/^cmdline=//p")"
-  CMDLINE="/boot${FIRMWARE}/${PREFIX}${CMDLINE_FILE:-cmdline.txt}"
-else
-  CMDLINE=/proc/cmdline
-fi
+CMDLINE=/boot/cmdline.txt
 
 # tests for Pi 1, 2, 0, CM4, CM5, 500 and x00 all test for specific boards...
 
@@ -108,13 +85,11 @@ is_pithree() {
 }
 
 is_pifour() {
-  grep -q "^Revision\s*:\s*[ 123][0-9a-fA-F][0-9a-fA-F]3[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$" /proc/cpuinfo
-  return $?
+  grep -aq '^Raspberry Pi 4 Model B' /proc/device-tree/model
 }
 
 is_pifive() {
-  grep -q "^Revision\s*:\s*[ 123][0-9a-fA-F][0-9a-fA-F]4[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$" /proc/cpuinfo
-  return $?
+  grep -aq '^Raspberry Pi 5 Model B' /proc/device-tree/model
 }
 
 get_pi_type() {
@@ -211,11 +186,7 @@ has_nvme() {
 }
 
 is_installed() {
-  if [ "$(dpkg -l "$1" 2> /dev/null | tail -n 1 | cut -d ' ' -f 1)" != "ii" ]; then
-    return 1
-  else
-    return 0
-  fi
+  pacman -Qq "$1" >/dev/null 2>&1
 }
 
 get_installed() {
@@ -1227,11 +1198,7 @@ do_spi() {
   fi
 
   set_config_var dtparam=spi $SETTING $CONFIG &&
-  if ! [ -e $BLACKLIST ]; then
-    touch $BLACKLIST
-  fi
-  sed $BLACKLIST -i -e "s/^\(blacklist[[:space:]]*spi[-_]bcm2708\)/#\1/"
-  dtparam spi=$SETTING
+  ASK_TO_REBOOT=1
 
   if [ "$INTERACTIVE" = True ]; then
     whiptail --msgbox "The SPI interface is $STATUS" 20 60 1
@@ -1268,16 +1235,7 @@ do_i2c() {
   fi
 
   set_config_var dtparam=i2c_arm $SETTING $CONFIG &&
-  if ! [ -e $BLACKLIST ]; then
-    touch $BLACKLIST
-  fi
-  sed $BLACKLIST -i -e "s/^\(blacklist[[:space:]]*i2c[-_]bcm2708\)/#\1/"
-  sed /etc/modules -i -e "s/^#[[:space:]]*\(i2c[-_]dev\)/\1/"
-  if ! grep -q "^i2c[-_]dev" /etc/modules; then
-    printf "i2c-dev\n" >> /etc/modules
-  fi
-  dtparam i2c_arm=$SETTING
-  modprobe i2c-dev
+  ASK_TO_REBOOT=1
 
   if [ "$INTERACTIVE" = True ]; then
     whiptail --msgbox "The ARM I2C interface is $STATUS" 20 60 1
@@ -1328,8 +1286,7 @@ do_serial_cons() {
       fi
     fi
   else
-    sed -i $CMDLINE -e "s/console=ttyAMA0,[0-9]\+ //"
-    sed -i $CMDLINE -e "s/console=serial0,[0-9]\+ //"
+    sed -i -E 's/(^| )console=(ttyAMA0|ttyS0|serial0),[0-9]+( |$)/ /g; s/  +/ /g; s/^ //; s/ $//' "$CMDLINE"
   fi
 }
 
@@ -3306,7 +3263,6 @@ EOF
 }
 
 do_finish() {
-  disable_raspi_config_at_boot
   if [ $ASK_TO_REBOOT -eq 1 ]; then
     whiptail --yesno "Would you like to reboot now?" 20 60 2
     if [ $? -eq 0 ]; then # yes
@@ -3863,59 +3819,34 @@ batch() {
 #
 # Command line options for non-interactive use
 #
-for i in $*
-do
-  case $i in
-  --memory-split)
-    OPT_MEMORY_SPLIT=GET
-    printf "Not currently supported\n"
-    exit 1
-    ;;
-  --memory-split=*)
-    OPT_MEMORY_SPLIT=$(echo $i | sed 's/[-a-zA-Z0-9]*=//')
-    printf "Not currently supported\n"
-    exit 1
-    ;;
-  --expand-rootfs)
-    INTERACTIVE=False
-    do_expand_rootfs
-    printf "Please reboot\n"
-    exit 0
-    ;;
-  --apply-os-config)
-    INTERACTIVE=False
-    do_apply_os_config
-    exit $?
-    ;;
-  nonint | batch)
-    INTERACTIVE=False
-    #echo "$@"
-    "$@"
-    exit $?
-    ;;
-  *)
-    # unknown option
-    ;;
-  esac
-done
-
-#if [ "GET" = "${OPT_MEMORY_SPLIT:-}" ]; then
-#  set -u # Fail on unset variables
-#  get_current_memory_split
-#  echo $CURRENT_MEMSPLIT
-#  exit 0
-#fi
-
-# Everything else needs to be run as root
-if [ $(id -u) -ne 0 ]; then
+if [ "$(id -u)" -ne 0 ]; then
   printf "Script must be run as root. Try 'sudo raspi-config'\n"
   exit 1
 fi
 
-if [ -n "${OPT_MEMORY_SPLIT:-}" ]; then
-  set -e # Fail when a command errors
-  set_memory_split "${OPT_MEMORY_SPLIT}"
-  exit 0
+check_pi_boot() {
+  if ! is_pi || [ ! -f "$CONFIG" ] || [ ! -f "$CMDLINE" ] || ! mountpoint -q "$(dirname "$CONFIG")"; then
+    printf 'A mounted Raspberry Pi boot partition with config.txt and cmdline.txt is required\n' >&2
+    return 1
+  fi
+}
+
+if [ "${1:-}" = nonint ]; then
+  check_pi_boot || exit 1
+  INTERACTIVE=False
+  case "$2:$3:$#" in
+    do_spi:[01]:3|do_i2c:[01]:3|do_onewire:[01]:3)
+      "$2" "$3"
+      exit $?
+      ;;
+    *)
+      printf 'Unsupported non-interactive action\n' >&2
+      exit 2
+      ;;
+  esac
+elif [ "$#" -ne 0 ]; then
+  printf 'Unsupported option\n' >&2
+  exit 2
 fi
 
 do_system_menu() {
@@ -4032,29 +3963,17 @@ do_display_menu() {
 }
 
 do_interface_menu() {
-  if is_pi ; then
-    FUN=$(whiptail --title "Raspberry Pi Software Configuration Tool (raspi-config)" --menu "Interfacing Options" $WT_HEIGHT $WT_WIDTH $WT_MENU_HEIGHT --cancel-button Back --ok-button Select \
-      "I1 SSH" "Enable/disable remote command line access using SSH" \
-      "I2 RPi Connect" "Enable/disable Raspberry Pi Connect" \
-      "I3 VNC" "Enable/disable graphical remote desktop access" \
-      "I4 SPI" "Enable/disable automatic loading of SPI kernel module" \
-      "I5 I2C" "Enable/disable automatic loading of I2C kernel module" \
-      "I6 Serial Port" "Enable/disable shell messages on the serial connection" \
-      "I7 1-Wire" "Enable/disable one-wire interface" \
-      3>&1 1>&2 2>&3)
-  else
-    FUN=$(whiptail --title "Raspberry Pi Software Configuration Tool (raspi-config)" --menu "Interfacing Options" $WT_HEIGHT $WT_WIDTH $WT_MENU_HEIGHT --cancel-button Back --ok-button Select \
-      "I2 SSH" "Enable/disable remote command line access using SSH" \
-      3>&1 1>&2 2>&3)
-  fi
+  FUN=$(whiptail --title "Raspberry Pi Configuration (Arch Linux ARM)" --menu "Interfacing Options" $WT_HEIGHT $WT_WIDTH $WT_MENU_HEIGHT --cancel-button Back --ok-button Select \
+    "I4 SPI" "Enable/disable SPI" \
+    "I5 I2C" "Enable/disable I2C" \
+    "I6 Serial Port" "Configure serial console and UART" \
+    "I7 1-Wire" "Enable/disable 1-Wire" \
+    3>&1 1>&2 2>&3)
   RET=$?
   if [ $RET -eq 1 ]; then
     return 0
   elif [ $RET -eq 0 ]; then
     case "$FUN" in
-      I1\ *) do_ssh ;;
-      I2\ *) do_rpi_connect ;;
-      I3\ *) do_vnc ;;
       I4\ *) do_spi ;;
       I5\ *) do_i2c ;;
       I6\ *) if is_pifive ; then do_serial_pi5 ; else do_serial ; fi ;;
@@ -4225,55 +4144,18 @@ do_proxy_menu() {
 # Interactive use loop
 #
 if [ "$INTERACTIVE" = True ]; then
-  [ -e $CONFIG ] || touch $CONFIG
+  check_pi_boot || exit 1
   calc_wt_size
-  while [ "$USER" = "root" ] || [ -z "$USER" ]; do
-    if ! USER=$(whiptail --inputbox "raspi-config could not determine the default user.\\n\\nWhat user should these settings apply to?" 20 60 pi 3>&1 1>&2 2>&3); then
-      return 0
-    fi
-  done
   while true; do
-    if is_pi ; then
-      MEMSIZE=$(vcgencmd get_config total_mem|cut -d= -f2)
-      if [ $MEMSIZE -lt 1024 ]; then
-        FMEMSIZE="${MEMSIZE}MB"
-      else
-        FMEMSIZE="$(expr $MEMSIZE / 1024)GB"
-      fi
-      FUN=$(whiptail --title "Raspberry Pi Software Configuration Tool (raspi-config)" --backtitle "$(cat /proc/device-tree/model), ${FMEMSIZE}" --menu "Setup Options" $WT_HEIGHT $WT_WIDTH $WT_MENU_HEIGHT --cancel-button Finish --ok-button Select \
-        "1 System Options" "Configure system settings" \
-        "2 Display Options" "Configure display settings" \
-        "3 Interface Options" "Configure connections to peripherals" \
-        "4 Performance Options" "Configure performance settings" \
-        "5 Localisation Options" "Configure language and regional settings" \
-        "6 Advanced Options" "Configure advanced settings" \
-        "8 Update" "Update this tool to the latest version" \
-        "9 About raspi-config" "Information about this configuration tool" \
-        3>&1 1>&2 2>&3)
-    else
-      FUN=$(whiptail --title "Raspberry Pi Software Configuration Tool (raspi-config)" --menu "Setup Options" $WT_HEIGHT $WT_WIDTH $WT_MENU_HEIGHT --cancel-button Finish --ok-button Select \
-        "1 System Options" "Configure system settings" \
-        "2 Display Options" "Configure display settings" \
-        "3 Interface Options" "Configure connections to peripherals" \
-        "5 Localisation Options" "Configure language and regional settings" \
-        "6 Advanced Options" "Configure advanced settings" \
-        "8 Update" "Update this tool to the latest version" \
-        "9 About raspi-config" "Information about this configuration tool" \
-        3>&1 1>&2 2>&3)
-    fi
+    FUN=$(whiptail --title "Raspberry Pi Configuration (Arch Linux ARM)" --backtitle "$(tr -d '\0' < /proc/device-tree/model)" --menu "Setup Options" $WT_HEIGHT $WT_WIDTH $WT_MENU_HEIGHT --cancel-button Finish --ok-button Select \
+      "3 Interface Options" "Configure hardware interfaces" \
+      3>&1 1>&2 2>&3)
     RET=$?
     if [ $RET -eq 1 ]; then
       do_finish
     elif [ $RET -eq 0 ]; then
       case "$FUN" in
-        1\ *) do_system_menu ;;
-        2\ *) do_display_menu ;;
         3\ *) do_interface_menu ;;
-        4\ *) do_performance_menu ;;
-        5\ *) do_internationalisation_menu ;;
-        6\ *) do_advanced_menu ;;
-        8\ *) do_update ;;
-        9\ *) do_about ;;
         *) whiptail --msgbox "Programmer error: unrecognized option" 20 60 1 ;;
       esac || whiptail --msgbox "There was an error running option $FUN" 20 60 1
     else
