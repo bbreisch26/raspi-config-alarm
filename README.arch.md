@@ -20,10 +20,30 @@ console is on the debug header while `dtparam=uart0` enables UART0 on GPIO14/15.
 Serial changes also require reboot. The tool does not manage device permissions
 or install GPIO/I2C/SPI development tools.
 
+## Test on the Pi
+
+On an existing Omarchy Pi installation, either install an image built with the
+new package manifest or build the package locally:
+
+```sh
+sudo pacman -S --needed base-devel git
+git clone --branch arch-trixie https://github.com/bbreisch26/raspi-config-alarm.git
+cd raspi-config-alarm
+makepkg -si
+sudo raspi-config
+```
+
+On a Pi 4B, disable the serial login shell and enable the serial port in the
+menu, then reboot. Check that `/dev/serial0` exists and `/proc/cmdline` has no
+serial console entry. For a UART loopback test, connect GPIO14 (header pin 8)
+to GPIO15 (pin 10) with the Pi powered off; GPIO is 3.3 V only. Enable I2C and
+SPI in the menu, reboot, and check for `/dev/i2c-*` and `/dev/spidev*`.
+1-Wire enumeration needs an attached device to test.
+
 ## Validation
 
 Run `sh tests/test_arch_interfaces.sh` for boot-file edits. `PKGBUILD` produces
 an Arch package from this branch. Physical Pi 4B and Pi 5 tests are required
 before release, including UART console/data behaviour, I2C and SPI devices,
-and 1-Wire enumeration. The package is not yet integrated into the Omarchy Pi
-image or published to AUR.
+and 1-Wire enumeration. The Omarchy Pi build includes this package, but a new
+image still needs to be built and tested on hardware. AUR publication is pending.
